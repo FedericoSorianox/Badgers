@@ -2,3 +2,4 @@ streamlit
 pandas
 Pillow
 psycopg2-binary
+plotly
