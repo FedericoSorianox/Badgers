@@ -1,5 +1,5 @@
 # Sistema de Gestión para Academia "The Badgers"
-# Interfaz Web con Streamlit - Versión PostgreSQL
+# Interfaz Web con Streamlit - Versión Final
 import streamlit as st
 import pandas as pd
 import base64
@@ -7,7 +7,7 @@ from PIL import Image
 import io
 from datetime import datetime
 import psycopg2
-from psycopg2 import sql
+import os # Importar la librería os para leer variables de entorno
 import plotly.express as px
 
 # --- Configuración de la Página de Streamlit ---
@@ -19,13 +19,22 @@ st.set_page_config(
 )
 
 # --- Funciones de Utilidad ---
+
 def get_db_connection():
     """Establishes a connection to the PostgreSQL database."""
+    # --- CAMBIO CRÍTICO: Usamos os.environ.get() en lugar de st.secrets ---
+    # Este es el método directo que funcionó en nuestra prueba de diagnóstico.
+    conn_url = os.environ.get('DATABASE_URL')
+    
+    if not conn_url:
+        st.error("Error Crítico: La variable de entorno DATABASE_URL no fue encontrada.")
+        log_operacion("DATABASE_URL not found in os.environ", "error")
+        return None
+        
     try:
-        conn_url = st.secrets["DATABASE_URL"]
         return psycopg2.connect(conn_url)
     except Exception as e:
-        st.error(f"Error de conexión a la base de datos. Verifica la DATABASE_URL en los secretos.")
+        st.error(f"Error de conexión a la base de datos: {e}")
         log_operacion(f"DB Connection Error: {e}", "error")
         return None
 
@@ -39,6 +48,7 @@ def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
 # --- Funciones de Base de Datos (PostgreSQL) ---
+
 def db_execute(query, params=None, fetch=None):
     """Función genérica para ejecutar consultas en la BD."""
     conn = get_db_connection()
@@ -89,6 +99,8 @@ def cargar_todos_los_datos():
     finally:
         if conn: conn.close()
 
+# --- El resto de las funciones (UI, páginas, etc.) se mantienen igual ---
+# ... (Código completo y funcional aquí) ...
 # --- Funciones de UI ---
 def guardar_imagen_base64(imagen_file):
     if imagen_file is None: return None
@@ -146,7 +158,6 @@ def formulario_socio(socio_data=None, es_edicion=False):
             params = (final_ci, socio_actualizado['nombre'], socio_actualizado['celular'], socio_actualizado['contacto_emergencia'], socio_actualizado['emergencia_movil'], socio_actualizado['fecha_nacimiento'] or None, socio_actualizado['tipo_cuota'], socio_actualizado['enfermedades'], socio_actualizado['comentarios'], socio_actualizado['foto'])
             if db_execute(query, params):
                 st.success(f"✅ Socio '{nombre}' guardado."); st.balloons(); cargar_todos_los_datos.clear(); st.session_state.edit_mode = {}; st.rerun()
-
 # --- PÁGINAS ---
 def pagina_dashboard(app_data):
     st.header("📊 Dashboard Principal")
@@ -154,7 +165,7 @@ def pagina_dashboard(app_data):
     col1.metric("Socios Activos", f"{len(app_data.get('socios', {}))} 👥")
     col2.metric("Productos en Inventario", f"{len(app_data.get('inventario', []))} 📦")
     total_gastos = sum(g['monto'] for g in app_data.get('gastos', []))
-    col3.metric("Gastos Totales", f"${total_gastos:,.2f} 💸")
+    col3.metric("Gastos Totales", f"${total_gastos:,.2f} �")
     st.markdown("---")
     st.subheader("Evolución de Socios Registrados")
     if app_data.get('socios'):
