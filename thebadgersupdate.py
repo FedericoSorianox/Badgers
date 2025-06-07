@@ -39,7 +39,6 @@ def log_operacion(mensaje, nivel="info"):
     """Imprime un mensaje de log con formato en la consola para depuración."""
     print(f"[{nivel.upper()}] {mensaje}")
 
-@st.cache_data
 def convert_df_to_csv(df):
     """Convierte un DataFrame a CSV para que pueda ser descargado."""
     return df.to_csv(index=False).encode('utf-8')
@@ -85,7 +84,6 @@ def cargar_todos_los_datos():
     try:
         with conn.cursor() as cursor:
             for table_name in ["socios", "pagos", "inventario", "gastos"]:
-                # Usar ORDER BY si es relevante para esa tabla
                 order_clause = "ORDER BY nombre ASC" if table_name == "socios" else "ORDER BY fecha DESC" if table_name == "gastos" else ""
                 cursor.execute(f'SELECT * FROM {table_name} {order_clause}')
                 rows = cursor.fetchall()
@@ -100,7 +98,6 @@ def cargar_todos_los_datos():
         log_operacion(f"Error al cargar datos: {e}", "error"); return data
     finally:
         if conn: conn.close()
-
 
 # --- Funciones de UI ---
 def guardar_imagen_base64(imagen_file):
@@ -306,15 +303,10 @@ def main():
     if 'app_initialized' not in st.session_state:
         init_database()
         st.session_state.app_initialized = True
-        st.session_state.edit_mode = {}; st.session_state.confirm_delete_ci = None
 
     app_data = cargar_todos_los_datos()
-    if not any(app_data.values()): # Si todos los diccionarios/listas están vacíos
-        conn_test = get_db_connection()
-        if not conn_test:
-            st.warning("La aplicación no puede continuar sin una conexión a la base de datos."); st.stop()
-        else:
-            conn_test.close()
+    if not any(app_data.values()) and not get_db_connection():
+        st.warning("No se pudieron cargar los datos de la aplicación. Revisa el error de conexión superior."); st.stop()
 
     st.sidebar.title("Menú de Navegación")
     paginas = ["Dashboard", "Socios", "Pagos", "Finanzas", "Inventario", "Administración"]
