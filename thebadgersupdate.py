@@ -1,5 +1,5 @@
 # Sistema de Gestión para Academia "The Badgers"
-# Interfaz Web con Streamlit - Versión Final y Corregida
+# Interfaz Web con Streamlit - v2.0
 import streamlit as st
 import pandas as pd
 import base64
@@ -7,13 +7,13 @@ from PIL import Image
 import io
 from datetime import datetime
 import psycopg2
-import os
+import os # Importar la librería os para leer variables de entorno
 import plotly.express as px
 
 # --- Configuración de la Página de Streamlit ---
 st.set_page_config(
     page_title="🥋 The Badgers",
-    page_icon="�",
+    page_icon="🥋",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -21,23 +21,25 @@ st.set_page_config(
 # --- Funciones de Utilidad ---
 def get_db_connection():
     """Establishes a connection to the PostgreSQL database using os.environ."""
+    # Este es el método directo que funcionó en nuestra prueba de diagnóstico.
     conn_url = os.environ.get('DATABASE_URL')
+    
     if not conn_url:
-        st.error("Error Crítico: La variable de entorno DATABASE_URL no fue encontrada.")
+        # Este error solo debería aparecer si la variable de entorno no está configurada en Render.
+        st.error("Error Crítico: La variable de entorno DATABASE_URL no fue encontrada en el servidor.")
         return None
+        
     try:
         return psycopg2.connect(conn_url)
-    except psycopg2.OperationalError as e:
-        st.error(f"Error de conexión a la base de datos. Verifica el valor de la URL. Error: {e}")
-        return None
     except Exception as e:
-        st.error(f"Error inesperado al conectar a la base de datos: {e}")
+        st.error(f"Error al conectar con la base de datos. Verifica la URL. Error: {e}")
         return None
 
 def log_operacion(mensaje, nivel="info"):
     """Imprime un mensaje de log con formato en la consola para depuración."""
     print(f"[{nivel.upper()}] {mensaje}")
 
+@st.cache_data
 def convert_df_to_csv(df):
     """Convierte un DataFrame a CSV para que pueda ser descargado."""
     return df.to_csv(index=False).encode('utf-8')
@@ -82,23 +84,23 @@ def cargar_todos_los_datos():
         return data
     try:
         with conn.cursor() as cursor:
-            cursor.execute('SELECT * FROM socios ORDER BY nombre ASC')
-            socios_rows = cursor.fetchall()
-            if socios_rows:
-                cols = [desc[0] for desc in cursor.description]
-                data['socios'] = {row[0]: dict(zip(cols, row)) for row in socios_rows}
-            
-            for table_name in ["pagos", "inventario", "gastos"]:
-                cursor.execute(f'SELECT * FROM {table_name}')
+            for table_name in ["socios", "pagos", "inventario", "gastos"]:
+                # Usar ORDER BY si es relevante para esa tabla
+                order_clause = "ORDER BY nombre ASC" if table_name == "socios" else "ORDER BY fecha DESC" if table_name == "gastos" else ""
+                cursor.execute(f'SELECT * FROM {table_name} {order_clause}')
                 rows = cursor.fetchall()
                 if rows:
                     cols = [desc[0] for desc in cursor.description]
-                    data[table_name] = [dict(zip(cols, row)) for row in rows]
+                    if table_name == 'socios':
+                        data[table_name] = {row[0]: dict(zip(cols, row)) for row in rows}
+                    else:
+                        data[table_name] = [dict(zip(cols, row)) for row in rows]
         return data
     except psycopg2.Error as e:
         log_operacion(f"Error al cargar datos: {e}", "error"); return data
     finally:
         if conn: conn.close()
+
 
 # --- Funciones de UI ---
 def guardar_imagen_base64(imagen_file):
@@ -148,38 +150,171 @@ def formulario_socio(socio_data=None, es_edicion=False):
             if nueva_foto: foto_base64 = guardar_imagen_base64(nueva_foto)
             elif eliminar_foto: foto_base64 = None
             socio_actualizado = {'nombre': nombre.strip(), 'ci': final_ci, 'celular': (celular or '').strip(), 'contacto_emergencia': (contacto_emergencia or '').strip(), 'emergencia_movil': (emergencia_movil or '').strip(), 'fecha_nacimiento': str(fecha_nacimiento) if fecha_nacimiento else '', 'tipo_cuota': tipo_cuota, 'enfermedades': (enfermedades or '').strip(), 'comentarios': (comentarios or '').strip(), 'foto': foto_base64}
-            query = "INSERT INTO socios (ci, nombre, celular, contacto_emergencia, emergencia_movil, fecha_nacimiento, tipo_cuota, enfermedades, comentarios, foto) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (ci) DO UPDATE SET nombre = EXCLUDED.nombre, celular = EXCLUDED.celular, contacto_emergencia = EXCLUDED.contacto_emergencia, emergencia_movil = EXCLUDED.emergencia_movil, fecha_nacimiento = EXCLUDED.fecha_nacimiento, tipo_cuota = EXCLUDED.tipo_cuota, enfermedades = EXCLUDED.enfermedades, comentarios = EXCLUDED.comentarios, foto = EXCLUDED.foto;"
+            query = """INSERT INTO socios (ci, nombre, celular, contacto_emergencia, emergencia_movil, fecha_nacimiento, tipo_cuota, enfermedades, comentarios, foto) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (ci) DO UPDATE SET nombre = EXCLUDED.nombre, celular = EXCLUDED.celular, contacto_emergencia = EXCLUDED.contacto_emergencia, emergencia_movil = EXCLUDED.emergencia_movil, fecha_nacimiento = EXCLUDED.fecha_nacimiento, tipo_cuota = EXCLUDED.tipo_cuota, enfermedades = EXCLUDED.enfermedades, comentarios = EXCLUDED.comentarios, foto = EXCLUDED.foto;"""
             params = tuple(socio_actualizado.get(col) for col in ['ci', 'nombre', 'celular', 'contacto_emergencia', 'emergencia_movil', 'fecha_nacimiento', 'tipo_cuota', 'enfermedades', 'comentarios', 'foto'])
             if db_execute(query, params):
                 st.success(f"✅ Socio '{nombre}' guardado."); st.balloons(); st.session_state.edit_mode = {}; st.rerun()
 
 # --- PÁGINAS ---
 def pagina_dashboard(app_data):
-    st.header("📊 Dashboard Principal"); #...
+    st.header("📊 Dashboard Principal")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Socios Activos", f"{len(app_data.get('socios', {}))} 👥")
+    col2.metric("Productos en Inventario", f"{len(app_data.get('inventario', []))} 📦")
+    total_gastos = sum(g['monto'] for g in app_data.get('gastos', []))
+    col3.metric("Gastos Totales", f"${total_gastos:,.2f} 💸")
+    st.markdown("---")
+    st.subheader("Evolución de Socios Registrados")
+    if app_data.get('socios'):
+        df_socios = pd.DataFrame(app_data['socios'].values())
+        if not df_socios.empty and 'fecha_registro' in df_socios.columns:
+            df_socios['fecha_registro'] = pd.to_datetime(df_socios['fecha_registro'])
+            df_socios_resampled = df_socios.set_index('fecha_registro').resample('M').size().reset_index(name='nuevos_socios')
+            df_socios_resampled['total_acumulado'] = df_socios_resampled['nuevos_socios'].cumsum()
+            fig = px.line(df_socios_resampled, x='fecha_registro', y='total_acumulado', title="Crecimiento de Socios a lo Largo del Tiempo", markers=True)
+            st.plotly_chart(fig, use_container_width=True)
+    st.subheader("Stock de Productos")
+    if app_data.get('inventario'):
+        df_inventario = pd.DataFrame(app_data['inventario'])
+        if not df_inventario.empty:
+            fig_stock = px.bar(df_inventario, x='nombre', y='stock', title="Niveles de Stock por Producto", color='nombre')
+            st.plotly_chart(fig_stock, use_container_width=True)
+
 def pagina_socios(app_data):
-    st.header("👥 Gestión de Socios"); #...
+    st.header("👥 Gestión de Socios")
+    accion = st.radio("Elige una acción:", ["Ver Lista", "Agregar Nuevo", "Importar/Exportar"], horizontal=True, label_visibility="collapsed")
+    if accion == "Agregar Nuevo":
+        st.subheader("➕ Agregar Nuevo Socio"); formulario_socio(es_edicion=False)
+    elif accion == "Ver Lista":
+        if not app_data.get('socios'): st.warning("No hay socios registrados."); return
+        termino_busqueda = st.text_input("Buscar por nombre o CI...", "").lower()
+        socios_a_mostrar = {ci: data for ci, data in app_data['socios'].items() if termino_busqueda in data['nombre'].lower() or termino_busqueda in ci}
+        for ci, socio in socios_a_mostrar.items():
+            with st.expander(f"{socio['nombre']} (CI: {ci})"):
+                col1, col2 = st.columns([1, 2])
+                with col1: mostrar_imagen_socio(socio.get('foto'), width=200)
+                with col2:
+                    if socio.get('tipo_cuota'): st.write(f"**Tipo de Cuota:** {socio['tipo_cuota']}")
+                    if st.button("✏️ Editar", key=f"edit_{ci}"):
+                        st.session_state.edit_mode = {ci: True}; st.rerun()
+                    if st.session_state.get('confirm_delete_ci') == ci:
+                        st.warning(f"**¿Estás seguro de que quieres eliminar a {socio['nombre']}?**")
+                        if st.button("🔴 Sí, eliminar", key=f"confirm_delete_{ci}"):
+                            if db_execute("DELETE FROM socios WHERE ci = %s", (ci,)):
+                                st.success(f"Socio {socio['nombre']} eliminado.")
+                                st.session_state.confirm_delete_ci = None; st.rerun()
+                    else:
+                        if st.button("🗑️ Eliminar", key=f"delete_{ci}", type="secondary"):
+                            st.session_state.confirm_delete_ci = ci; st.rerun()
+                if st.session_state.get('edit_mode', {}).get(ci):
+                    st.markdown("---"); st.subheader("✍️ Editando Socio"); formulario_socio(socio_data=socio, es_edicion=True)
+                    if st.button("Cancelar Edición", key=f"cancel_edit_{ci}"):
+                        st.session_state.edit_mode = {}; st.rerun()
+    elif accion == "Importar/Exportar":
+        st.subheader("⬆️⬇️ Importar y Exportar Socios")
+        st.markdown("#### Exportar a CSV")
+        if app_data.get('socios'):
+            df_socios = pd.DataFrame(app_data['socios'].values())
+            if 'foto' in df_socios.columns: df_socios_export = df_socios.drop(columns=['foto'])
+            else: df_socios_export = df_socios
+            csv = convert_df_to_csv(df_socios_export); st.download_button(label="📥 Descargar lista de socios como CSV", data=csv, file_name=f"socios_{datetime.now().strftime('%Y%m%d')}.csv", mime='text/csv')
+        st.markdown("---")
+        st.markdown("#### Importar desde CSV")
+        uploaded_file = st.file_uploader("Sube un archivo CSV.", type="csv")
+        if uploaded_file:
+            try:
+                df_import = pd.read_csv(uploaded_file, dtype=str).fillna('')
+                st.dataframe(df_import)
+                if st.button("Confirmar Importación", type="primary"):
+                    all_db_columns = ['ci', 'nombre', 'celular', 'contacto_emergencia', 'emergencia_movil', 'fecha_nacimiento', 'tipo_cuota', 'enfermedades', 'comentarios', 'foto']
+                    df_import.columns = [col.lower().strip() for col in df_import.columns]
+                    for _, row in df_import.iterrows():
+                        if not row.get('ci') or not row.get('nombre'): continue
+                        params_tuple = tuple(row.get(col, '') for col in all_db_columns)
+                        query = "INSERT INTO socios (ci, nombre, celular, contacto_emergencia, emergencia_movil, fecha_nacimiento, tipo_cuota, enfermedades, comentarios, foto) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (ci) DO UPDATE SET nombre = EXCLUDED.nombre, celular = EXCLUDED.celular, contacto_emergencia = EXCLUDED.contacto_emergencia, emergencia_movil = EXCLUDED.emergencia_movil, fecha_nacimiento = EXCLUDED.fecha_nacimiento, tipo_cuota = EXCLUDED.tipo_cuota, enfermedades = EXCLUDED.enfermedades, comentarios = EXCLUDED.comentarios;"
+                        db_execute(query, params_tuple)
+                    st.success("Importación completada."); st.rerun()
+            except Exception as e: st.error(f"Error al importar: {e}")
+
 def pagina_pagos(app_data):
-    st.header("💸 Gestión de Pagos"); #...
+    st.header("💸 Gestión de Pagos")
+    socios = app_data.get('socios', {});
+    if not socios: st.warning("No hay socios registrados."); return
+    hoy = datetime.now(); meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+    año_actual = st.selectbox("Selecciona el año:", options=range(hoy.year + 1, hoy.year - 5, -1), index=0)
+    data = [{'CI': ci, 'Socio': socio['nombre'], **{mes_nombre: "✅" if any(p['mes'] == i + 1 for p in app_data.get('pagos', []) if p['ci'] == ci and p['año'] == año_actual) else "❌" for i, mes_nombre in enumerate(meses)}} for ci, socio in socios.items()]
+    st.dataframe(pd.DataFrame(data), use_container_width=True)
+    st.subheader("Registrar Nuevo Pago")
+    with st.form("form_pago", clear_on_submit=True):
+        col1, col2, col3, col4 = st.columns(4)
+        socio_ci = col1.selectbox("Socio*", options=list(socios.keys()), format_func=lambda ci: socios[ci]['nombre'])
+        mes_pago = col2.selectbox("Mes*", options=list(range(1, 13)), format_func=lambda m: meses[m-1])
+        año_pago = col3.number_input("Año*", min_value=2020, value=hoy.year)
+        monto_pago = col4.number_input("Monto*", min_value=0.0)
+        if st.form_submit_button("💾 Guardar Pago", type="primary"):
+            id_pago = f"{socio_ci}_{mes_pago}_{año_pago}"
+            query = "INSERT INTO pagos (id, ci, mes, año, monto, fecha_pago) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (ci, mes, año) DO UPDATE SET monto = EXCLUDED.monto, fecha_pago = EXCLUDED.fecha_pago"
+            if db_execute(query, (id_pago, socio_ci, mes_pago, año_pago, monto_pago, datetime.now().date())):
+                st.success("Pago registrado."); st.rerun()
+
 def pagina_finanzas(app_data):
-    st.header("💰 Gestión de Finanzas"); #...
+    st.header("💰 Gestión de Finanzas")
+    with st.form("form_gastos", clear_on_submit=True):
+        col1, col2, col3 = st.columns(3)
+        concepto = col1.text_input("Concepto*"); fecha = col1.date_input("Fecha*", datetime.now())
+        monto = col2.number_input("Monto*", min_value=0.0); categoria = col2.selectbox("Categoría", ["Alquiler", "Servicios", "Material", "Marketing", "Sueldos", "Otros"])
+        descripcion = col3.text_area("Descripción")
+        if st.form_submit_button("💸 Registrar Gasto", type="primary") and concepto and monto:
+            query = "INSERT INTO gastos (concepto, monto, fecha, categoria, descripcion) VALUES (%s, %s, %s, %s, %s)"
+            if db_execute(query, (concepto, monto, fecha, categoria, descripcion)):
+                st.success("Gasto registrado."); st.rerun()
+    st.subheader("Historial de Gastos")
+    if app_data.get('gastos'): st.dataframe(pd.DataFrame(app_data['gastos']), use_container_width=True)
+
 def pagina_inventario(app_data):
-    st.header("📦 Gestión de Inventario"); #...
+    st.header("📦 Gestión de Inventario")
+    with st.form("form_inventario", clear_on_submit=True):
+        col1, col2, col3 = st.columns(3)
+        nombre_prod = col1.text_input("Nombre del Producto*")
+        precio_prod = col2.number_input("Precio de Venta*", min_value=0.0)
+        stock_prod = col3.number_input("Stock Inicial/Añadir*", min_value=0)
+        if st.form_submit_button("📦 Guardar Producto", type="primary") and nombre_prod:
+            query = "INSERT INTO inventario (nombre, precio_venta, stock) VALUES (%s, %s, %s) ON CONFLICT (nombre) DO UPDATE SET precio_venta = EXCLUDED.precio_venta, stock = inventario.stock + EXCLUDED.stock;"
+            if db_execute(query, (nombre_prod, precio_prod, stock_prod)):
+                st.success("Producto guardado."); st.rerun()
+    st.subheader("Listado de Productos")
+    if app_data.get('inventario'): st.dataframe(pd.DataFrame(app_data['inventario']), use_container_width=True, hide_index=True)
+
 def pagina_administracion():
-    st.header("⚙️ Administración del Sistema"); #...
+    st.header("⚙️ Administración del Sistema")
+    st.warning("⚠️ **Atención:** Las acciones en esta sección son destructivas y no se pueden deshacer.")
+    with st.expander("Reiniciar Base de Datos"):
+        st.write("Esto borrará **TODAS** las tablas y las volverá a crear con la estructura más reciente.")
+        if st.checkbox("Entiendo que esto borrará todos los datos existentes."):
+            if st.button("🔴 REINICIAR BASE DE DATOS AHORA", type="primary"):
+                with st.spinner("Reiniciando..."):
+                    tables_to_drop = ["pagos", "gastos", "inventario", "socios"]
+                    for table in tables_to_drop:
+                        db_execute(f"DROP TABLE IF EXISTS {table} CASCADE;")
+                    init_database()
+                st.success("¡Base de datos reiniciada!"); st.balloons(); st.rerun()
 
 # --- Bloque Principal de Ejecución ---
 def main():
-    st.title("🥋 Sistema de Gestión de The Badgers")
+    st.title("🥋 Sistema de Gestión v2.0")
     
-    # Intenta cargar los datos. Si falla la conexión, la app se detendrá aquí.
-    app_data = cargar_todos_los_datos()
-    if not app_data:
-        st.warning("No se pudieron cargar los datos de la aplicación. Revisa el error de conexión superior."); st.stop()
-
     if 'app_initialized' not in st.session_state:
         init_database()
         st.session_state.app_initialized = True
         st.session_state.edit_mode = {}; st.session_state.confirm_delete_ci = None
+
+    app_data = cargar_todos_los_datos()
+    if not any(app_data.values()): # Si todos los diccionarios/listas están vacíos
+        conn_test = get_db_connection()
+        if not conn_test:
+            st.warning("La aplicación no puede continuar sin una conexión a la base de datos."); st.stop()
+        else:
+            conn_test.close()
 
     st.sidebar.title("Menú de Navegación")
     paginas = ["Dashboard", "Socios", "Pagos", "Finanzas", "Inventario", "Administración"]
